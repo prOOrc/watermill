@@ -66,13 +66,13 @@ func createRouterAndFacade(ts TestServices, t *testing.T, commandHandler *Captur
 
 			return eventName
 		},
-		CommandHandlers: func(cb *cqrs.CommandBus, eb *cqrs.EventBus) []cqrs.CommandHandler {
+		CommandHandlers: func(cb cqrs.CommandBus, eb cqrs.EventBus) []cqrs.CommandHandler {
 			require.NotNil(t, cb)
 			require.NotNil(t, eb)
 
 			return []cqrs.CommandHandler{commandHandler}
 		},
-		EventHandlers: func(cb *cqrs.CommandBus, eb *cqrs.EventBus) []cqrs.EventHandler {
+		EventHandlers: func(cb cqrs.CommandBus, eb cqrs.EventBus) []cqrs.EventHandler {
 			require.NotNil(t, cb)
 			require.NotNil(t, eb)
 
@@ -240,10 +240,10 @@ func TestFacadeConfig_Validate(t *testing.T) {
 		GenerateEventsTopic: func(eventName string) string {
 			return eventName
 		},
-		CommandHandlers: func(cb *cqrs.CommandBus, eb *cqrs.EventBus) []cqrs.CommandHandler {
+		CommandHandlers: func(cb cqrs.CommandBus, eb cqrs.EventBus) []cqrs.CommandHandler {
 			return []cqrs.CommandHandler{}
 		},
-		EventHandlers: func(cb *cqrs.CommandBus, eb *cqrs.EventBus) []cqrs.EventHandler {
+		EventHandlers: func(cb cqrs.CommandBus, eb cqrs.EventBus) []cqrs.EventHandler {
 			return []cqrs.EventHandler{}
 		},
 		Router:            router,
