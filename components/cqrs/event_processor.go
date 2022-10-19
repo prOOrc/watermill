@@ -33,6 +33,39 @@ type EventHandler interface {
 	Handle(ctx context.Context, event interface{}) error
 }
 
+type eventHandler struct {
+	name     string
+	newEvent func() interface{}
+	handle   func(ctx context.Context, event interface{}) error
+}
+
+// Handle implements EventHandler
+func (c *eventHandler) Handle(ctx context.Context, event interface{}) error {
+	return c.handle(ctx, event)
+}
+
+// HandlerName implements EventHandler
+func (c *eventHandler) HandlerName() string {
+	return c.name
+}
+
+// NewEvent implements EventHandler
+func (c *eventHandler) NewEvent() interface{} {
+	return c.newEvent()
+}
+
+func NewEventHandler(
+	name string,
+	newEvent func() interface{},
+	handle func(context.Context, interface{}) error,
+) EventHandler {
+	return &eventHandler{
+		name:     name,
+		newEvent: newEvent,
+		handle:   handle,
+	}
+}
+
 // EventsSubscriberConstructor creates a subscriber for EventHandler.
 // It allows you to create separated customized Subscriber for every command handler.
 type EventsSubscriberConstructor func(handlerName string) (message.Subscriber, error)

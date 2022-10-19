@@ -8,8 +8,12 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 
+type CommandBus interface {
+	Send(ctx context.Context, cmd interface{}) error
+}
+
 // CommandBus transports commands to command handlers.
-type CommandBus struct {
+type commandBus struct {
 	publisher     message.Publisher
 	generateTopic func(commandName string) string
 	marshaler     CommandEventMarshaler
@@ -19,7 +23,7 @@ func NewCommandBus(
 	publisher message.Publisher,
 	generateTopic func(commandName string) string,
 	marshaler CommandEventMarshaler,
-) (*CommandBus, error) {
+) (CommandBus, error) {
 	if publisher == nil {
 		return nil, errors.New("missing publisher")
 	}
@@ -30,11 +34,11 @@ func NewCommandBus(
 		return nil, errors.New("missing marshaler")
 	}
 
-	return &CommandBus{publisher, generateTopic, marshaler}, nil
+	return &commandBus{publisher, generateTopic, marshaler}, nil
 }
 
 // Send sends command to the command bus.
-func (c CommandBus) Send(ctx context.Context, cmd interface{}) error {
+func (c *commandBus) Send(ctx context.Context, cmd interface{}) error {
 	msg, err := c.marshaler.Marshal(cmd)
 	if err != nil {
 		return err

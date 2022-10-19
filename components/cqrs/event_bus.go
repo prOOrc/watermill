@@ -7,8 +7,12 @@ import (
 	"github.com/pkg/errors"
 )
 
+type EventBus interface {
+	Publish(ctx context.Context, event interface{}) error
+}
+
 // EventBus transports events to event handlers.
-type EventBus struct {
+type eventBus struct {
 	publisher     message.Publisher
 	generateTopic func(eventName string) string
 	marshaler     CommandEventMarshaler
@@ -18,7 +22,7 @@ func NewEventBus(
 	publisher message.Publisher,
 	generateTopic func(eventName string) string,
 	marshaler CommandEventMarshaler,
-) (*EventBus, error) {
+) (EventBus, error) {
 	if publisher == nil {
 		return nil, errors.New("missing publisher")
 	}
@@ -29,11 +33,11 @@ func NewEventBus(
 		return nil, errors.New("missing marshaler")
 	}
 
-	return &EventBus{publisher, generateTopic, marshaler}, nil
+	return &eventBus{publisher, generateTopic, marshaler}, nil
 }
 
 // Publish sends event to the event bus.
-func (c EventBus) Publish(ctx context.Context, event interface{}) error {
+func (c *eventBus) Publish(ctx context.Context, event interface{}) error {
 	msg, err := c.marshaler.Marshal(event)
 	if err != nil {
 		return err

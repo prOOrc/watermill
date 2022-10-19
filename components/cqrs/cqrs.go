@@ -15,7 +15,7 @@ type FacadeConfig struct {
 	GenerateCommandsTopic func(commandName string) string
 
 	// CommandHandlers return command handlers which should be executed.
-	CommandHandlers func(commandBus *CommandBus, eventBus *EventBus) []CommandHandler
+	CommandHandlers func(commandBus CommandBus, eventBus EventBus) []CommandHandler
 
 	// CommandsPublisher is Publisher used to publish commands.
 	CommandsPublisher message.Publisher
@@ -32,7 +32,7 @@ type FacadeConfig struct {
 	GenerateEventsTopic func(eventName string) string
 
 	// EventHandlers return event handlers which should be executed.
-	EventHandlers func(commandBus *CommandBus, eventBus *EventBus) []EventHandler
+	EventHandlers func(commandBus CommandBus, eventBus EventBus) []EventHandler
 
 	// EventsPublisher is Publisher used to publish commands.
 	EventsPublisher message.Publisher
@@ -103,19 +103,19 @@ func (c FacadeConfig) CommandsEnabled() bool {
 // You can also create buses and processors manually, drawing inspiration from how it's done in NewFacade.
 type Facade struct {
 	commandsTopic func(commandName string) string
-	commandBus    *CommandBus
+	commandBus    CommandBus
 
 	eventsTopic func(eventName string) string
-	eventBus    *EventBus
+	eventBus    EventBus
 
 	commandEventMarshaler CommandEventMarshaler
 }
 
-func (f Facade) CommandBus() *CommandBus {
+func (f Facade) CommandBus() CommandBus {
 	return f.commandBus
 }
 
-func (f Facade) EventBus() *EventBus {
+func (f Facade) EventBus() EventBus {
 	return f.eventBus
 }
 

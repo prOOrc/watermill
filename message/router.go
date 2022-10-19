@@ -729,7 +729,7 @@ func (h *handler) handleMessage(msg *Message, handler HandlerFunc) {
 
 	h.addHandlerContext(producedMessages...)
 
-	if err := h.publishProducedMessages(producedMessages, msgFields); err != nil {
+	if err := h.publishProducedMessages(msg, producedMessages, msgFields); err != nil {
 		h.logger.Error("Publishing produced messages failed", err, nil)
 		msg.Nack()
 		return
@@ -739,7 +739,9 @@ func (h *handler) handleMessage(msg *Message, handler HandlerFunc) {
 	h.logger.Trace("Message acked", msgFields)
 }
 
-func (h *handler) publishProducedMessages(producedMessages Messages, msgFields watermill.LogFields) error {
+const ReplyToMetadataKey = "command_reply_channel"
+
+func (h *handler) publishProducedMessages(consumedMessage *Message, producedMessages Messages, msgFields watermill.LogFields) error {
 	if len(producedMessages) == 0 {
 		return nil
 	}
@@ -748,13 +750,18 @@ func (h *handler) publishProducedMessages(producedMessages Messages, msgFields w
 		return ErrOutputInNoPublisherHandler
 	}
 
+	publishTopic := consumedMessage.Metadata.Get(ReplyToMetadataKey)
+	if publishTopic == "" {
+		publishTopic = h.publishTopic
+	}
+
 	h.logger.Trace("Sending produced messages", msgFields.Add(watermill.LogFields{
 		"produced_messages_count": len(producedMessages),
-		"publish_topic":           h.publishTopic,
+		"publish_topic":           publishTopic,
 	}))
 
 	for _, msg := range producedMessages {
-		if err := h.publisher.Publish(h.publishTopic, msg); err != nil {
+		if err := h.publisher.Publish(publishTopic, msg); err != nil {
 			// todo - how to deal with it better/transactional/retry?
 			h.logger.Error("Cannot publish message", err, msgFields.Add(watermill.LogFields{
 				"not_sent_message": fmt.Sprintf("%#v", producedMessages),
