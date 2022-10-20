@@ -128,7 +128,7 @@ func (o *orchestrator) Start(ctx context.Context, sagaData SagaData) (*Instance,
 	)
 
 	logger.Trace("executing saga starting hook", watermill.LogFields{})
-	o.definition.OnHook(SagaStarting, instance)
+	o.definition.OnHook(ctx, SagaStarting, instance)
 
 	results := o.executeNextStep(ctx, stepContext{step: sagaNotStarted}, sagaData)
 	if results.failure != nil {
@@ -314,7 +314,7 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 			}
 
 			if results.updatedStepContext.ended {
-				o.processEnd(instance)
+				o.processEnd(ctx, instance)
 			}
 
 			err = o.instanceStore.Update(ctx, instance)
@@ -341,7 +341,7 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 	return nil
 }
 
-func (o *orchestrator) processEnd(instance *Instance) {
+func (o *orchestrator) processEnd(ctx context.Context, instance *Instance) {
 	logger := o.logger.With(
 		watermill.LogFields{
 			"saga_name": o.definition.SagaName(),
@@ -351,10 +351,10 @@ func (o *orchestrator) processEnd(instance *Instance) {
 
 	if instance.compensating {
 		logger.Trace("executing saga compensated hook", watermill.LogFields{})
-		o.definition.OnHook(SagaCompensated, instance)
+		o.definition.OnHook(ctx, SagaCompensated, instance)
 	} else {
 		logger.Trace("executing saga completed hook", watermill.LogFields{})
-		o.definition.OnHook(SagaCompleted, instance)
+		o.definition.OnHook(ctx, SagaCompleted, instance)
 	}
 	logger.Trace("saga has finished all steps", watermill.LogFields{})
 }
