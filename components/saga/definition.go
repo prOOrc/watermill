@@ -1,5 +1,7 @@
 package saga
 
+import "context"
+
 // Definition interface
 type Definition interface {
 	SagaName() string
@@ -7,5 +9,5 @@ type Definition interface {
 	NewData() SagaData
 	NewReply(name string) (interface{}, error)
 	Steps() []Step
-	OnHook(hook LifecycleHook, instance *Instance)
+	OnHook(ctx context.Context, hook LifecycleHook, instance *Instance)
 }
