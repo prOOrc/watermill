@@ -57,6 +57,10 @@ var PassthroughHandler HandlerFunc = func(msg *Message) ([]*Message, error) {
 //		}
 type HandlerMiddleware func(h HandlerFunc) HandlerFunc
 
+type BeforeMessageHook func(msg *Message) (*Message, error)
+
+type AfterMessageHook func(msg *Message, err error) (error)
+
 // RouterPlugin is function which is executed on Router start.
 type RouterPlugin func(*Router) error
 
@@ -543,6 +547,9 @@ type handler struct {
 	stopFn         context.CancelFunc
 	stopped        chan struct{}
 	routersCloseCh chan struct{}
+
+	beforeHooks []BeforeMessageHook
+	afterHooks []AfterMessageHook
 }
 
 func (h *handler) run(ctx context.Context, middlewares []middleware) {
@@ -597,6 +604,24 @@ func (h *Handler) AddMiddleware(m ...HandlerMiddleware) {
 	})
 
 	h.router.addHandlerLevelMiddleware(handler.name, m...)
+}
+
+func (h *Handler) AddBeforeHook(m ...BeforeMessageHook) {
+	handler := h.handler
+	handler.logger.Debug("Adding before hook to handler", watermill.LogFields{
+		"count":       fmt.Sprintf("%d", len(m)),
+		"handlerName": handler.name,
+	})
+	handler.addBeforeHook(m...)
+}
+
+func (h *Handler) AddAfterHook(m ...AfterMessageHook) {
+	handler := h.handler
+	handler.logger.Debug("Adding after hook to handler", watermill.LogFields{
+		"count":       fmt.Sprintf("%d", len(m)),
+		"handlerName": handler.name,
+	})
+	handler.addAfterHook(m...)
 }
 
 // Started returns channel which is stopped when handler is running.
@@ -688,6 +713,14 @@ func (h *handler) addHandlerContext(messages ...*Message) {
 	}
 }
 
+func (h *handler) addBeforeHook(m ...BeforeMessageHook) {
+	h.beforeHooks = append(h.beforeHooks, m...)
+}
+
+func (h *handler) addAfterHook(m ...AfterMessageHook) {
+	h.afterHooks = append(h.afterHooks, m...)
+}
+
 func (h *handler) handleClose(ctx context.Context) {
 	select {
 	case <-h.routersCloseCh:
@@ -719,10 +752,20 @@ func (h *handler) handleMessage(msg *Message, handler HandlerFunc) {
 	}()
 
 	h.logger.Trace("Received message", msgFields)
+	
+	for _, hook := range h.beforeHooks {
+		msg, err := hook(msg)
+		if err != nil {
+			h.logger.Error("Before hook returned error", err, nil)
+			msg.Nack()
+			return
+		}
+	}
 
 	producedMessages, err := handler(msg)
 	if err != nil {
 		h.logger.Error("Handler returned error", err, nil)
+		h.execAfterHooks(msg, err)
 		msg.Nack()
 		return
 	}
@@ -731,6 +774,13 @@ func (h *handler) handleMessage(msg *Message, handler HandlerFunc) {
 
 	if err := h.publishProducedMessages(msg, producedMessages, msgFields); err != nil {
 		h.logger.Error("Publishing produced messages failed", err, nil)
+		h.execAfterHooks(msg, err)
+		msg.Nack()
+		return
+	}
+
+	err = h.execAfterHooks(msg, nil)
+	if err != nil {
 		msg.Nack()
 		return
 	}
@@ -740,6 +790,17 @@ func (h *handler) handleMessage(msg *Message, handler HandlerFunc) {
 }
 
 const ReplyToMetadataKey = "command_reply_channel"
+
+func (h *handler) execAfterHooks(consumedMessage *Message, err error) error {
+	for _, hook := range h.afterHooks {
+		e := hook(consumedMessage, err)
+		if e != nil {
+			h.logger.Error("After hook returned error", e, nil)
+			
+		}
+	}
+	return nil
+}
 
 func (h *handler) publishProducedMessages(consumedMessage *Message, producedMessages Messages, msgFields watermill.LogFields) error {
 	if len(producedMessages) == 0 {
@@ -759,16 +820,14 @@ func (h *handler) publishProducedMessages(consumedMessage *Message, producedMess
 		"produced_messages_count": len(producedMessages),
 		"publish_topic":           publishTopic,
 	}))
-
-	for _, msg := range producedMessages {
-		if err := h.publisher.Publish(publishTopic, msg); err != nil {
-			// todo - how to deal with it better/transactional/retry?
-			h.logger.Error("Cannot publish message", err, msgFields.Add(watermill.LogFields{
+	if err := h.publisher.Publish(publishTopic, producedMessages...); err != nil {
+		// todo - how to deal with it better/transactional/retry?
+		h.logger.Error("Cannot publish messages", err, msgFields.Add(
+			watermill.LogFields{
 				"not_sent_message": fmt.Sprintf("%#v", producedMessages),
 			}))
 
-			return err
-		}
+		return err
 	}
 
 	return nil
