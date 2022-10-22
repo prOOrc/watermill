@@ -153,7 +153,7 @@ func (p ReplyCommandProcessor) AddHandlersToRouter(r *message.Router) error {
 			return errors.Wrap(err, "cannot create subscriber for command processor")
 		}
 
-		r.AddHandler(
+		h := r.AddHandler(
 			handlerName,
 			topicName,
 			subscriber,
@@ -161,6 +161,12 @@ func (p ReplyCommandProcessor) AddHandlersToRouter(r *message.Router) error {
 			p.publisher,
 			handlerFunc,
 		)
+		if beforeHookReg, ok := handler.(interface{BeforeHooks() []message.BeforeMessageHook }); ok {
+			h.AddBeforeHook(beforeHookReg.BeforeHooks()...)
+		}
+		if afterHookReg, ok := handler.(interface{AfterHooks() []message.AfterMessageHook }); ok {
+			h.AddAfterHook(afterHookReg.AfterHooks()...)
+		}
 	}
 
 	return nil
