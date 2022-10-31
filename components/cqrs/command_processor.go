@@ -10,6 +10,8 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 
+type CommandHandleFunc func(ctx context.Context, cmd interface{}) error
+
 // CommandHandler receives a command defined by NewCommand and handles it with the Handle method.
 // If using DDD, CommandHandler may modify and persist the aggregate.
 //
@@ -31,6 +33,39 @@ type CommandHandler interface {
 	NewCommand() interface{}
 
 	Handle(ctx context.Context, cmd interface{}) error
+}
+
+type commandHandler struct {
+	name       string
+	newCommand func() interface{}
+	handle     CommandHandleFunc
+}
+
+// Handle implements CommandHandler
+func (c *commandHandler) Handle(ctx context.Context, cmd interface{}) error {
+	return c.handle(ctx, cmd)
+}
+
+// HandlerName implements CommandHandler
+func (c *commandHandler) HandlerName() string {
+	return c.name
+}
+
+// NewCommand implements CommandHandler
+func (c *commandHandler) NewCommand() interface{} {
+	return c.newCommand()
+}
+
+func NewCommandHandler(
+	name string,
+	newCommand func() interface{},
+	handle CommandHandleFunc,
+) CommandHandler {
+	return &commandHandler{
+		name:       name,
+		newCommand: newCommand,
+		handle:     handle,
+	}
 }
 
 // CommandsSubscriberConstructor creates subscriber for CommandHandler.
