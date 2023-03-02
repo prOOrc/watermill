@@ -280,6 +280,7 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 	for {
 		if results.failure != nil {
 			logger.Trace("handling local failure result", watermill.LogFields{})
+			logger.Error("error while process step", results.failure, watermill.LogFields{})
 			results, err = o.handleReply(ctx, results.updatedStepContext, results.updatedSagaData, cqrs.WithFailure())
 			if err != nil {
 				logger.Error("error handling local failure result", err, watermill.LogFields{})
