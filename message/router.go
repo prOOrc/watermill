@@ -815,6 +815,14 @@ func (h *handler) publishProducedMessages(consumedMessage *Message, producedMess
 	if publishTopic == "" {
 		publishTopic = h.publishTopic
 	}
+	if publishTopic == "" {
+		h.logger.Trace(
+			"Ignore produced messages. Reply topic is not defined.",
+			msgFields.Add(watermill.LogFields{
+				"produced_messages_count": len(producedMessages),
+			}))
+		return nil
+	}
 
 	h.logger.Trace("Sending produced messages", msgFields.Add(watermill.LogFields{
 		"produced_messages_count": len(producedMessages),
