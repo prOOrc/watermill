@@ -754,9 +754,10 @@ func (h *handler) handleMessage(msg *Message, handler HandlerFunc) {
 	h.logger.Trace("Received message", msgFields)
 	
 	for _, hook := range h.beforeHooks {
-		msg, err := hook(msg)
-		if err != nil {
-			h.logger.Error("Before hook returned error", err, nil)
+		var beforeHookError error
+		msg, beforeHookError = hook(msg)
+		if beforeHookError != nil {
+			h.logger.Error("Before hook returned error", beforeHookError, nil)
 			msg.Nack()
 			return
 		}
