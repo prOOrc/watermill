@@ -67,6 +67,42 @@ func NewReplyCommandHandler[ReplyCommand any](
 	}
 }
 
+// NewSimpleReplyCommandHandler creates a new ReplyCommandHandler implementation based on provided function
+// and command type inferred from function argument.
+func NewSimpleReplyCommandHandler[ReplyCommand any](
+	handlerName string,
+	handleFunc func(ctx context.Context, cmd *ReplyCommand) (error),
+) ReplyCommandHandler {
+	return &genericReplyCommandHandler[ReplyCommand]{
+		handleFunc:  func(ctx context.Context, cmd *ReplyCommand) ([]ReplyMessage, error) {
+			err := handleFunc(ctx, cmd)
+			if err != nil {
+				return []ReplyMessage{WithFailure()}, err
+			}
+			return []ReplyMessage{WithSuccess()}, nil
+		},
+		handlerName: handlerName,
+	}
+}
+
+// NewResultReplyCommandHandler creates a new ReplyCommandHandler implementation based on provided function
+// and command type inferred from function argument.
+func NewResultReplyCommandHandler[ReplyCommand any, Result Reply](
+	handlerName string,
+	handleFunc func(ctx context.Context, cmd *ReplyCommand) (Result, error),
+) ReplyCommandHandler {
+	return &genericReplyCommandHandler[ReplyCommand]{
+		handleFunc:  func(ctx context.Context, cmd *ReplyCommand) ([]ReplyMessage, error) {
+			result, err := handleFunc(ctx, cmd)
+			if err != nil {
+				return []ReplyMessage{WithFailure()}, err
+			}
+			return []ReplyMessage{WithReply(result).Success()}, nil
+		},
+		handlerName: handlerName,
+	}
+}
+
 // ReplyCommandProcessor determines which ReplyCommandHandler should handle the command received from the command bus.
 type ReplyCommandProcessor struct {
 	handlers      []ReplyCommandHandler
