@@ -2,6 +2,7 @@ package saga
 
 import (
 	"context"
+	stdErrors "errors"
 	"fmt"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -15,19 +16,53 @@ import (
 type Orchestrator interface {
 	Start(ctx context.Context, sagaData SagaData) (*Instance, error)
 	ReplyChannel() string
-	AddHandlerToRouter(r *message.Router) (*message.Handler, error)
+	AddHandlerToRouter(r *message.Router) error
 }
 
 type ReplyChannelSubscriberConstructor func(handlerName string) (message.Subscriber, error)
+type TopicNameGenerator func(commandName string) string
+
+type OrchestratorConfig struct {
+	InstanceStore          InstanceStore
+	SubscriberConstructor  ReplyChannelSubscriberConstructor
+	GenerateSubscribeTopic TopicNameGenerator
+	Publisher              message.Publisher
+	Marshaler              cqrs.CommandEventMarshaler
+	Logger                 watermill.LoggerAdapter
+}
+
+func (c OrchestratorConfig) Validate() error {
+	var err error
+
+	if c.InstanceStore == nil {
+		err = stdErrors.Join(err, errors.New("missing InstanceStore"))
+	}
+
+	if c.Marshaler == nil {
+		err = stdErrors.Join(err, errors.New("missing Marshaler"))
+	}
+
+	if c.Publisher == nil {
+		err = stdErrors.Join(err, errors.New("missing Publisher"))
+	}
+
+	if c.GenerateSubscribeTopic == nil {
+		err = stdErrors.Join(err, errors.New("missing GenerateSubscribeTopic"))
+	}
+	if c.SubscriberConstructor == nil {
+		err = stdErrors.Join(err, errors.New("missing SubscriberConstructor"))
+	}
+
+	if c.Logger == nil {
+		err = stdErrors.Join(err, errors.New("missing Logger"))
+	}
+
+	return err
+}
 
 type orchestrator struct {
-	definition            Definition
-	instanceStore         InstanceStore
-	subscriberConstructor ReplyChannelSubscriberConstructor
-	publisher             message.Publisher
-	marshaler             cqrs.CommandEventMarshaler
-	generateTopic         func(commandName string) string
-	logger                watermill.LoggerAdapter
+	definition Definition
+	config     OrchestratorConfig
 }
 
 const sagaNotStarted = -1
@@ -41,37 +76,58 @@ func NewOrchestrator(
 	subscriberConstructor ReplyChannelSubscriberConstructor,
 	publisher message.Publisher,
 	marshaler cqrs.CommandEventMarshaler,
-	generateTopic func(commandName string) string,
+	generateTopic TopicNameGenerator,
 	logger watermill.LoggerAdapter,
-	options ...OrchestratorOption) Orchestrator {
+) (Orchestrator, error) {
+	config := OrchestratorConfig{
+		InstanceStore:          store,
+		SubscriberConstructor:  subscriberConstructor,
+		Publisher:              publisher,
+		Marshaler:              marshaler,
+		GenerateSubscribeTopic: generateTopic,
+		Logger:                 logger,
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
 	o := &orchestrator{
-		definition:            definition,
-		instanceStore:         store,
-		subscriberConstructor: subscriberConstructor,
-		publisher:             publisher,
-		marshaler:             marshaler,
-		generateTopic:         generateTopic,
-		logger:                logger,
+		definition: definition,
+		config: OrchestratorConfig{
+			InstanceStore:          store,
+			SubscriberConstructor:  subscriberConstructor,
+			Publisher:              publisher,
+			Marshaler:              marshaler,
+			GenerateSubscribeTopic: generateTopic,
+			Logger:                 logger,
+		},
 	}
 
-	for _, option := range options {
-		option(o)
+	o.config.Logger.Trace("saga.Orchestrator constructed", watermill.LogFields{"saga_name": definition.SagaName()})
+
+	return o, nil
+}
+
+// NewOrchestratorWithConfig constructs a new Orchestrator
+func NewOrchestratorWithConfig(
+	definition Definition,
+	config OrchestratorConfig,
+) (Orchestrator, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	o := &orchestrator{
+		definition: definition,
+		config:     config,
 	}
 
-	o.logger.Trace("saga.Orchestrator constructed", watermill.LogFields{"saga_name": definition.SagaName()})
+	o.config.Logger.Trace("saga.Orchestrator constructed", watermill.LogFields{"saga_name": definition.SagaName()})
 
-	return o
+	return o, nil
 }
 
 // OrchestratorFactory orchestrates local and distributed processes
 type OrchestratorFactory struct {
-	instanceStore         InstanceStore
-	subscriberConstructor ReplyChannelSubscriberConstructor
-	publisher             message.Publisher
-	marshaler             cqrs.CommandEventMarshaler
-	generateTopic         func(commandName string) string
-	logger                watermill.LoggerAdapter
-	options               []OrchestratorOption
+	config OrchestratorConfig
 }
 
 // NewOrchestratorFactory constructs a new OrchestratorFactory
@@ -80,32 +136,52 @@ func NewOrchestratorFactory(
 	subscriberConstructor ReplyChannelSubscriberConstructor,
 	publisher message.Publisher,
 	marshaler cqrs.CommandEventMarshaler,
-	generateTopic func(commandName string) string,
+	generateTopic TopicNameGenerator,
 	logger watermill.LoggerAdapter,
-	options []OrchestratorOption,
-) *OrchestratorFactory {
+) (*OrchestratorFactory, error) {
+	config := OrchestratorConfig{
+		InstanceStore:          store,
+		SubscriberConstructor:  subscriberConstructor,
+		Publisher:              publisher,
+		Marshaler:              marshaler,
+		GenerateSubscribeTopic: generateTopic,
+		Logger:                 logger,
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
 	f := &OrchestratorFactory{
-		instanceStore:         store,
-		subscriberConstructor: subscriberConstructor,
-		publisher:             publisher,
-		marshaler:             marshaler,
-		generateTopic:         generateTopic,
-		logger:                logger,
+		config: OrchestratorConfig{
+			InstanceStore:          store,
+			SubscriberConstructor:  subscriberConstructor,
+			Publisher:              publisher,
+			Marshaler:              marshaler,
+			GenerateSubscribeTopic: generateTopic,
+			Logger:                 logger,
+		},
 	}
 
-	return f
+	return f, nil
 }
 
-func (f *OrchestratorFactory) New(definition Definition) Orchestrator {
-	return NewOrchestrator(
+// NewOrchestratorFactoryWithConfig constructs a new OrchestratorFactory
+func NewOrchestratorFactoryWithConfig(
+	config OrchestratorConfig,
+) (*OrchestratorFactory, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	f := &OrchestratorFactory{
+		config: config,
+	}
+
+	return f, nil
+}
+
+func (f *OrchestratorFactory) New(definition Definition) (Orchestrator, error) {
+	return NewOrchestratorWithConfig(
 		definition,
-		f.instanceStore,
-		f.subscriberConstructor,
-		f.publisher,
-		f.marshaler,
-		f.generateTopic,
-		f.logger,
-		f.options...,
+		f.config,
 	)
 }
 
@@ -117,12 +193,12 @@ func (o *orchestrator) Start(ctx context.Context, sagaData SagaData) (*Instance,
 		sagaData: sagaData,
 	}
 
-	err := o.instanceStore.Save(ctx, instance)
+	err := o.config.InstanceStore.Save(ctx, instance)
 	if err != nil {
 		return nil, err
 	}
 
-	logger := o.logger.With(
+	logger := o.config.Logger.With(
 		watermill.LogFields{
 			"saga_name": o.definition.SagaName(),
 			"saga_id":   instance.sagaID,
@@ -152,29 +228,29 @@ func (o *orchestrator) ReplyChannel() string {
 	return o.definition.ReplyChannel()
 }
 
-func (o *orchestrator) AddHandlerToRouter(r *message.Router) (handler *message.Handler, err error) {
+func (o *orchestrator) AddHandlerToRouter(r *message.Router) (err error) {
 	handlerName := o.definition.SagaName()
 	topicName := o.ReplyChannel()
-	logger := o.logger.With(watermill.LogFields{
+	logger := o.config.Logger.With(watermill.LogFields{
 		"command_handler_name": handlerName,
 		"topic":                topicName,
 	})
 
 	logger.Debug("Adding saga to router", nil)
 
-	subscriber, err := o.subscriberConstructor(handlerName)
+	subscriber, err := o.config.SubscriberConstructor(handlerName)
 	if err != nil {
-		return nil, errors.Wrap(err, "cannot create subscriber for command processor")
+		return errors.Wrap(err, "cannot create subscriber for command processor")
 	}
 
-	handler = r.AddNoPublisherHandler(
+	r.AddNoPublisherHandler(
 		handlerName,
 		topicName,
 		subscriber,
 		o.receiveMessage,
 	)
 
-	return handler, err
+	return nil
 }
 
 // receiveMessage implements message.HandlerFunc
@@ -185,7 +261,7 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 	}
 
 	if sagaID == "" || (sagaName == "" || sagaName != o.definition.SagaName()) {
-		o.logger.Error(
+		o.config.Logger.Error(
 			"cannot process message",
 			fmt.Errorf("cannot process message"),
 			watermill.LogFields{
@@ -196,7 +272,7 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 		return nil
 	}
 
-	logger := o.logger.With(
+	logger := o.config.Logger.With(
 		watermill.LogFields{
 			"reply_name": replyName,
 			"saga_name":  sagaName,
@@ -213,7 +289,7 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 		return nil
 	}
 
-	o.marshaler.Unmarshal(message, replyMessage)
+	o.config.Marshaler.Unmarshal(message, replyMessage)
 	if err != nil {
 		// sagas should not be receiving any replies that have not already been registered
 		logger.Error("error decoding reply message payload", err, watermill.LogFields{})
@@ -223,7 +299,7 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 	replyMsg := cqrs.NewReply(reply, message.Metadata)
 	ctx := message.Context()
 	data := o.definition.NewData()
-	instance, err := o.instanceStore.Find(ctx, sagaID, data)
+	instance, err := o.config.InstanceStore.Find(ctx, sagaID, data)
 	if err != nil {
 		logger.Error("failed to locate saga instance data", err, watermill.LogFields{})
 		return nil
@@ -252,19 +328,19 @@ func (o *orchestrator) replyMessageInfo(message *message.Message) (string, strin
 
 	replyName, err = message.Metadata.GetRequired(cqrs.MessageReplyName)
 	if err != nil {
-		o.logger.Error("error reading reply name", err, watermill.LogFields{})
+		o.config.Logger.Error("error reading reply name", err, watermill.LogFields{})
 		return "", "", "", err
 	}
 
 	sagaID, err = message.Metadata.GetRequired(MessageReplySagaID)
 	if err != nil {
-		o.logger.Error("error reading saga id", err, watermill.LogFields{})
+		o.config.Logger.Error("error reading saga id", err, watermill.LogFields{})
 		return "", "", "", err
 	}
 
 	sagaName, err = message.Metadata.GetRequired(MessageReplySagaName)
 	if err != nil {
-		o.logger.Error("error reading saga name", err, watermill.LogFields{})
+		o.config.Logger.Error("error reading saga name", err, watermill.LogFields{})
 		return "", "", "", err
 	}
 
@@ -272,7 +348,7 @@ func (o *orchestrator) replyMessageInfo(message *message.Message) (string, strin
 }
 
 func (o *orchestrator) processResults(ctx context.Context, instance *Instance, results *stepResults) (err error) {
-	logger := o.logger.With(
+	logger := o.config.Logger.With(
 		watermill.LogFields{
 			"saga_name": o.definition.SagaName(),
 			"saga_id":   instance.sagaID,
@@ -290,11 +366,11 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 			}
 		} else {
 			for _, command := range results.commands {
-				msg, err := o.marshaler.Marshal(command)
+				msg, err := o.config.Marshaler.Marshal(command)
 				if err != nil {
 					return err
 				}
-				commandName := o.marshaler.Name(command)
+				commandName := o.config.Marshaler.Name(command)
 				msg.SetContext(ctx)
 				message.WithHeaders(map[string]string{
 					cqrs.MessageCommandName:         commandName,
@@ -302,8 +378,8 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 				})(msg)
 				WithSagaInfo(instance)(msg)
 
-				topicName := o.generateTopic(commandName)
-				err = o.publisher.Publish(topicName, msg)
+				topicName := o.config.GenerateSubscribeTopic(commandName)
+				err = o.config.Publisher.Publish(topicName, msg)
 				if err != nil {
 					logger.Error("error while sending commands", err, watermill.LogFields{})
 					return err
@@ -320,7 +396,7 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 				o.processEnd(ctx, instance)
 			}
 
-			err = o.instanceStore.Update(ctx, instance)
+			err = o.config.InstanceStore.Update(ctx, instance)
 			if err != nil {
 				logger.Error("error saving saga instance", err, watermill.LogFields{})
 				return err
@@ -345,7 +421,7 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 }
 
 func (o *orchestrator) processEnd(ctx context.Context, instance *Instance) {
-	logger := o.logger.With(
+	logger := o.config.Logger.With(
 		watermill.LogFields{
 			"saga_name": o.definition.SagaName(),
 			"saga_id":   instance.sagaID,
@@ -365,7 +441,7 @@ func (o *orchestrator) processEnd(ctx context.Context, instance *Instance) {
 func (o *orchestrator) handleReply(ctx context.Context, stepCtx stepContext, sagaData SagaData, message cqrs.ReplyMessage) (*stepResults, error) {
 	replyName := message.Reply().ReplyName()
 
-	logger := o.logger.With(
+	logger := o.config.Logger.With(
 		watermill.LogFields{
 			"saga_name":  o.definition.SagaName(),
 			"saga_id":    message.Headers().Get(MessageReplySagaID),
