@@ -1,7 +1,7 @@
 package cqrs
 
 import (
-	"context"
+	stdErrors "errors"
 	"fmt"
 	"strings"
 
@@ -11,110 +11,141 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 
-// CommandHandler receives a command defined by NewCommand and handles it with the Handle method.
-// If using DDD, CommandHandler may modify and persist the aggregate.
-//
-// In contrast to EventHandler, every Command must have only one CommandHandler.
-//
-// One instance of CommandHandler is used during handling messages.
-// When multiple commands are delivered at the same time, Handle method can be executed multiple times at the same time.
-// Because of that, Handle method needs to be thread safe!
-type ReplyCommandHandler interface {
-	// HandlerName is the name used in message.Router while creating handler.
+type ReplyCommandProcessorConfig struct {
+	// GenerateSubscribeTopic is used to generate topic for subscribing command.
+	GenerateSubscribeTopic ReplyCommandProcessorGenerateSubscribeTopicFn
+
+	// SubscriberConstructor is used to create subscriber for ReplyCommandHandler.
+	SubscriberConstructor ReplyCommandProcessorSubscriberConstructorFn
+
+	Publisher message.Publisher
+
+	// OnHandle is called before handling command.
+	// OnHandle works in a similar way to middlewares: you can inject additional logic before and after handling a command.
 	//
-	// It will be also passed to CommandsSubscriberConstructor.
-	// May be useful, for example, to create a consumer group per each handler.
+	// Because of that, you need to explicitly call params.Handler.Handle() to handle the command.
+	//  func(params ReplyCommandProcessorOnHandleParams) (err error) {
+	//      // logic before handle
+	//      //  (...)
 	//
-	// WARNING: If HandlerName was changed and is used for generating consumer groups,
-	// it may result with **reconsuming all messages**!
-	HandlerName() string
+	//      err := params.Handler.Handle(params.Message.Context(), params.ReplyCommand)
+	//
+	//      // logic after handle
+	//      //  (...)
+	//
+	//      return err
+	//  }
+	//
+	// This option is not required.
+	OnHandle ReplyCommandProcessorOnHandleFn
 
-	NewCommand() any
-	Handle(ctx context.Context, cmd any) ([]ReplyMessage, error)
+	// Marshaler is used to marshal and unmarshal commands.
+	// It is required.
+	Marshaler CommandEventMarshaler
+
+	// Logger instance used to log.
+	// If not provided, watermill.NopLogger is used.
+	Logger watermill.LoggerAdapter
+
+	// If true, ReplyCommandProcessor will ack messages even if ReplyCommandHandler returns an error.
+	// If RequestReplyBackend is not null and sending reply fails, the message will be nack-ed anyway.
+	//
+	// Warning: It's not recommended to use this option when you are using requestreply component
+	// (requestreply.NewReplyCommandHandler or requestreply.NewReplyCommandHandlerWithResult), as it may ack the
+	// command when sending reply failed.
+	//
+	// When you are using requestreply, you should use requestreply.PubSubBackendConfig.AckReplyCommandErrors.
+	AckReplyCommandHandlingErrors bool
+
+	// disableRouterAutoAddHandlers is used to keep backwards compatibility.
+	// it is set when ReplyCommandProcessor is created by NewReplyCommandProcessor.
+	// Deprecated: please migrate to NewReplyCommandProcessorWithConfig.
+	disableRouterAutoAddHandlers bool
 }
 
-type genericReplyCommandHandler[Command any] struct {
-	handleFunc  func(ctx context.Context, cmd *Command) ([]ReplyMessage, error)
-	handlerName string
-}
-
-// Handle implements CommandHandler
-func (c genericReplyCommandHandler[Command]) Handle(ctx context.Context, cmd any) ([]ReplyMessage, error) {
-	command := cmd.(*Command)
-	return c.handleFunc(ctx, command)
-}
-
-// HandlerName implements CommandHandler
-func (c genericReplyCommandHandler[Command]) HandlerName() string {
-	return c.handlerName
-}
-
-// NewCommand implements CommandHandler
-func (c genericReplyCommandHandler[Command]) NewCommand() interface{} {
-	tVar := new(Command)
-	return tVar
-}
-
-// NewReplyCommandHandler creates a new ReplyCommandHandler implementation based on provided function
-// and command type inferred from function argument.
-func NewReplyCommandHandler[ReplyCommand any](
-	handlerName string,
-	handleFunc func(ctx context.Context, cmd *ReplyCommand) ([]ReplyMessage, error),
-) ReplyCommandHandler {
-	return &genericReplyCommandHandler[ReplyCommand]{
-		handleFunc:  handleFunc,
-		handlerName: handlerName,
+func (c *ReplyCommandProcessorConfig) setDefaults() {
+	if c.Logger == nil {
+		c.Logger = watermill.NopLogger{}
 	}
 }
 
-// NewSimpleReplyCommandHandler creates a new ReplyCommandHandler implementation based on provided function
-// and command type inferred from function argument.
-func NewSimpleReplyCommandHandler[ReplyCommand any](
-	handlerName string,
-	handleFunc func(ctx context.Context, cmd *ReplyCommand) (error),
-) ReplyCommandHandler {
-	return &genericReplyCommandHandler[ReplyCommand]{
-		handleFunc:  func(ctx context.Context, cmd *ReplyCommand) ([]ReplyMessage, error) {
-			err := handleFunc(ctx, cmd)
-			if err != nil {
-				return []ReplyMessage{WithFailure()}, err
-			}
-			return []ReplyMessage{WithSuccess()}, nil
-		},
-		handlerName: handlerName,
+func (c ReplyCommandProcessorConfig) Validate() error {
+	var err error
+	
+	if c.Marshaler == nil {
+		err = stdErrors.Join(err, errors.New("missing Marshaler"))
 	}
+
+	if c.Publisher == nil {
+		err = stdErrors.Join(err, errors.New("missing Publisher"))
+	}
+
+	if c.GenerateSubscribeTopic == nil {
+		err = stdErrors.Join(err, errors.New("missing GenerateSubscribeTopic"))
+	}
+	if c.SubscriberConstructor == nil {
+		err = stdErrors.Join(err, errors.New("missing SubscriberConstructor"))
+	}
+
+	return err
 }
 
-// NewResultReplyCommandHandler creates a new ReplyCommandHandler implementation based on provided function
-// and command type inferred from function argument.
-func NewResultReplyCommandHandler[ReplyCommand any, Result Reply](
-	handlerName string,
-	handleFunc func(ctx context.Context, cmd *ReplyCommand) (Result, error),
-) ReplyCommandHandler {
-	return &genericReplyCommandHandler[ReplyCommand]{
-		handleFunc:  func(ctx context.Context, cmd *ReplyCommand) ([]ReplyMessage, error) {
-			result, err := handleFunc(ctx, cmd)
-			if err != nil {
-				return []ReplyMessage{WithFailure()}, err
-			}
-			return []ReplyMessage{WithReply(result).Success()}, nil
-		},
-		handlerName: handlerName,
-	}
+type ReplyCommandProcessorGenerateSubscribeTopicFn func(ReplyCommandProcessorGenerateSubscribeTopicParams) (string, error)
+
+type ReplyCommandProcessorGenerateSubscribeTopicParams struct {
+	CommandName    string
+	CommandHandler ReplyCommandHandler
+}
+
+// ReplyCommandProcessorSubscriberConstructorFn creates subscriber for ReplyCommandHandler.
+// It allows you to create a separate customized Subscriber for every command handler.
+type ReplyCommandProcessorSubscriberConstructorFn func(ReplyCommandProcessorSubscriberConstructorParams) (message.Subscriber, error)
+
+type ReplyCommandProcessorSubscriberConstructorParams struct {
+	HandlerName string
+	Handler     ReplyCommandHandler
+}
+
+type ReplyCommandProcessorOnHandleFn func(params ReplyCommandProcessorOnHandleParams) ([]ReplyMessage, error)
+
+type ReplyCommandProcessorOnHandleParams struct {
+	Handler ReplyCommandHandler
+
+	CommandName string
+	Command     any
+
+	// Message is never nil and can be modified.
+	Message *message.Message
 }
 
 // ReplyCommandProcessor determines which ReplyCommandHandler should handle the command received from the command bus.
 type ReplyCommandProcessor struct {
-	handlers      []ReplyCommandHandler
-	generateTopic func(commandName string) string
+	router *message.Router
 
-	subscriberConstructor CommandsSubscriberConstructor
-	publisher             message.Publisher
+	handlers []ReplyCommandHandler
 
-	marshaler CommandEventMarshaler
-	logger    watermill.LoggerAdapter
+	config ReplyCommandProcessorConfig
 }
 
+func NewReplyCommandProcessorWithConfig(router *message.Router, config ReplyCommandProcessorConfig) (*ReplyCommandProcessor, error) {
+	config.setDefaults()
+
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	if router == nil && !config.disableRouterAutoAddHandlers {
+		return nil, errors.New("missing router")
+	}
+
+	return &ReplyCommandProcessor{
+		router: router,
+		config: config,
+	}, nil
+}
+
+// NewReplyCommandProcessor creates a new ReplyCommandProcessor.
+// Deprecated. Use NewReplyCommandProcessorWithConfig instead.
 func NewReplyCommandProcessor(
 	handlers []ReplyCommandHandler,
 	generateTopic func(commandName string) string,
@@ -129,24 +160,73 @@ func NewReplyCommandProcessor(
 	if generateTopic == nil {
 		return nil, errors.New("missing generateTopic")
 	}
+	if publisher == nil {
+		return nil, errors.New("missing publisher")
+	}
 	if subscriberConstructor == nil {
 		return nil, errors.New("missing subscriberConstructor")
 	}
-	if marshaler == nil {
-		return nil, errors.New("missing marshaler")
-	}
-	if logger == nil {
-		logger = watermill.NopLogger{}
+
+	cp, err := NewReplyCommandProcessorWithConfig(
+		nil,
+		ReplyCommandProcessorConfig{
+			Publisher: publisher,
+			GenerateSubscribeTopic: func(params ReplyCommandProcessorGenerateSubscribeTopicParams) (string, error) {
+				return generateTopic(params.CommandName), nil
+			},
+			SubscriberConstructor: func(params ReplyCommandProcessorSubscriberConstructorParams) (message.Subscriber, error) {
+				return subscriberConstructor(params.HandlerName)
+			},
+			Marshaler:                    marshaler,
+			Logger:                       logger,
+			disableRouterAutoAddHandlers: true,
+		},
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	return &ReplyCommandProcessor{
-		handlers,
-		generateTopic,
-		subscriberConstructor,
-		publisher,
-		marshaler,
-		logger,
-	}, nil
+	for _, handler := range handlers {
+		if err := cp.AddHandlers(handler); err != nil {
+			return nil, err
+		}
+	}
+
+	return cp, nil
+}
+
+// ReplyCommandsSubscriberConstructor creates subscriber for ReplyCommandHandler.
+// It allows you to create a separate customized Subscriber for every command handler.
+//
+// Deprecated: please use CommandProcessorSubscriberConstructorFn instead.
+type ReplyCommandsSubscriberConstructor func(handlerName string) (message.Subscriber, error)
+
+// AddHandlers adds a new ReplyCommandHandler to the ReplyCommandProcessor and adds it to the router.
+func (p *ReplyCommandProcessor) AddHandlers(handlers ...ReplyCommandHandler) error {
+	handledCommands := map[string]struct{}{}
+	for _, handler := range handlers {
+		commandName := p.config.Marshaler.Name(handler.NewCommand())
+		if _, ok := handledCommands[commandName]; ok {
+			return DuplicateCommandHandlerError{commandName}
+		}
+
+		handledCommands[commandName] = struct{}{}
+	}
+
+	if p.config.disableRouterAutoAddHandlers {
+		p.handlers = append(p.handlers, handlers...)
+		return nil
+	}
+
+	for _, handler := range handlers {
+		if err := p.addHandlerToRouter(p.router, handler); err != nil {
+			return err
+		}
+
+		p.handlers = append(p.handlers, handler)
+	}
+
+	return nil
 }
 
 type DuplicateReplyCommandHandlerError struct {
@@ -157,46 +237,67 @@ func (d DuplicateReplyCommandHandlerError) Error() string {
 	return fmt.Sprintf("command handler for command %s already exists", d.ReplyCommandName)
 }
 
+// AddHandlersToRouter adds the ReplyCommandProcessor's handlers to the given router.
+// It should be called only once per ReplyCommandProcessor instance.
+//
+// It is required to call AddHandlersToRouter only if command processor is created with NewReplyCommandProcessor (disableRouterAutoAddHandlers is set to true).
+// Deprecated: please migrate to command processor created by NewReplyCommandProcessorWithConfig.
 func (p ReplyCommandProcessor) AddHandlersToRouter(r *message.Router) error {
-	handledReplyCommands := map[string]struct{}{}
+	if !p.config.disableRouterAutoAddHandlers {
+		return errors.New("AddHandlersToRouter should be called only when using deprecated NewReplyCommandProcessor")
+	}
 
 	for i := range p.Handlers() {
 		handler := p.handlers[i]
-		handlerName := handler.HandlerName()
-		commandName := p.marshaler.Name(handler.NewCommand())
-		topicName := p.generateTopic(commandName)
 
-		if _, ok := handledReplyCommands[commandName]; ok {
-			return DuplicateReplyCommandHandlerError{commandName}
-		}
-		handledReplyCommands[commandName] = struct{}{}
-
-		logger := p.logger.With(watermill.LogFields{
-			"command_handler_name": handlerName,
-			"topic":                topicName,
-		})
-
-		handlerFunc, err := p.routerHandlerFunc(handler, logger)
-		if err != nil {
+		if err := p.addHandlerToRouter(r, handler); err != nil {
 			return err
 		}
-
-		logger.Debug("Adding reply command handler to router", nil)
-
-		subscriber, err := p.subscriberConstructor(handlerName)
-		if err != nil {
-			return errors.Wrap(err, "cannot create subscriber for command processor")
-		}
-
-		r.AddHandler(
-			handlerName,
-			topicName,
-			subscriber,
-			"",
-			p.publisher,
-			handlerFunc,
-		)
 	}
+
+	return nil
+}
+
+func (p ReplyCommandProcessor) addHandlerToRouter(r *message.Router, handler ReplyCommandHandler) error {
+	handlerName := handler.HandlerName()
+	commandName := p.config.Marshaler.Name(handler.NewCommand())
+
+	topicName, err := p.config.GenerateSubscribeTopic(ReplyCommandProcessorGenerateSubscribeTopicParams{
+		CommandName:    commandName,
+		CommandHandler: handler,
+	})
+	if err != nil {
+		return errors.Wrapf(err, "cannot generate topic for command handler %s", handlerName)
+	}
+
+	logger := p.config.Logger.With(watermill.LogFields{
+		"command_handler_name": handlerName,
+		"topic":                topicName,
+	})
+
+	handlerFunc, err := p.routerHandlerFunc(handler, logger)
+	if err != nil {
+		return err
+	}
+
+	logger.Debug("Adding reply command handler to router", nil)
+
+	subscriber, err := p.config.SubscriberConstructor(ReplyCommandProcessorSubscriberConstructorParams{
+		HandlerName: handlerName,
+		Handler:     handler,
+	})
+	if err != nil {
+		return errors.Wrap(err, "cannot create subscriber for command processor")
+	}
+
+	r.AddHandler(
+		handlerName,
+		topicName,
+		subscriber,
+		"",
+		p.config.Publisher,
+		handlerFunc,
+	)
 
 	return nil
 }
@@ -207,7 +308,7 @@ func (p ReplyCommandProcessor) Handlers() []ReplyCommandHandler {
 
 func (p ReplyCommandProcessor) routerHandlerFunc(handler ReplyCommandHandler, logger watermill.LoggerAdapter) (message.HandlerFunc, error) {
 	cmd := handler.NewCommand()
-	cmdName := p.marshaler.Name(cmd)
+	cmdName := p.config.Marshaler.Name(cmd)
 
 	if err := p.validateReplyCommand(cmd); err != nil {
 		return nil, err
@@ -215,7 +316,7 @@ func (p ReplyCommandProcessor) routerHandlerFunc(handler ReplyCommandHandler, lo
 
 	return func(msg *message.Message) (replyMessages []*message.Message, err error) {
 		cmd := handler.NewCommand()
-		messageCmdName := p.marshaler.NameFromMessage(msg)
+		messageCmdName := p.config.Marshaler.NameFromMessage(msg)
 
 		if messageCmdName != cmdName {
 			logger.Trace("Received different command type than expected, ignoring", watermill.LogFields{
@@ -231,18 +332,40 @@ func (p ReplyCommandProcessor) routerHandlerFunc(handler ReplyCommandHandler, lo
 			"received_command_type": messageCmdName,
 		})
 
-		if err := p.marshaler.Unmarshal(msg, cmd); err != nil {
+		ctx := CtxWithOriginalMessage(msg.Context(), msg)
+		msg.SetContext(ctx)
+
+		if err := p.config.Marshaler.Unmarshal(msg, cmd); err != nil {
 			return replyMessages, err
 		}
-		replies, err := handler.Handle(msg.Context(), cmd)
+
+		handle := func(params ReplyCommandProcessorOnHandleParams) (replies []ReplyMessage, err error) {
+			return params.Handler.Handle(ctx, params.Command)
+		}
+		if p.config.OnHandle != nil {
+			handle = p.config.OnHandle
+		}
+
+		replies, err := handle(ReplyCommandProcessorOnHandleParams{
+			Handler:     handler,
+			CommandName: messageCmdName,
+			Command:     cmd,
+			Message:     msg,
+		})
+
+		if p.config.AckReplyCommandHandlingErrors && err != nil {
+			logger.Error("Error when handling command, acking (AckCommandHandlingErrors is enabled)", err, nil)
+			return replyMessages, err
+		}
 		if err != nil {
-			logger.Debug("Error when handling command", watermill.LogFields{"err": err})
+			logger.Debug("Error when handling command, nacking", watermill.LogFields{"err": err})
 			return replyMessages, err
 		}
+
 		replyMessages = make([]*message.Message, len(replies))
 		correlationHeaders := p.correlationHeaders(msg.Metadata)
 		for i, reply := range replies {
-			m, err := p.marshaler.Marshal(reply.Reply())
+			m, err := p.config.Marshaler.Marshal(reply.Reply())
 			message.WithHeaders(correlationHeaders)(m)
 			message.WithHeaders(reply.Headers())(m)
 			m.SetContext(msg.Context())
@@ -271,7 +394,6 @@ func (p *ReplyCommandProcessor) correlationHeaders(headers message.Metadata) mes
 
 	return replyHeaders
 }
-
 
 func (p ReplyCommandProcessor) validateReplyCommand(cmd interface{}) error {
 	// ReplyCommandHandler's NewReplyCommand must return a pointer, because it is used to unmarshal
