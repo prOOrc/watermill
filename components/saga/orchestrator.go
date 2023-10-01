@@ -18,10 +18,12 @@ type Orchestrator interface {
 	AddHandlerToRouter(r *message.Router) (*message.Handler, error)
 }
 
+type ReplyChannelSubscriberConstructor func(handlerName string) (message.Subscriber, error)
+
 type orchestrator struct {
 	definition            Definition
 	instanceStore         InstanceStore
-	subscriberConstructor cqrs.CommandsSubscriberConstructor
+	subscriberConstructor ReplyChannelSubscriberConstructor
 	publisher             message.Publisher
 	marshaler             cqrs.CommandEventMarshaler
 	generateTopic         func(commandName string) string
@@ -36,7 +38,7 @@ type ReplyFactoryFunc func() interface{}
 func NewOrchestrator(
 	definition Definition,
 	store InstanceStore,
-	subscriberConstructor cqrs.CommandsSubscriberConstructor,
+	subscriberConstructor ReplyChannelSubscriberConstructor,
 	publisher message.Publisher,
 	marshaler cqrs.CommandEventMarshaler,
 	generateTopic func(commandName string) string,
@@ -64,7 +66,7 @@ func NewOrchestrator(
 // OrchestratorFactory orchestrates local and distributed processes
 type OrchestratorFactory struct {
 	instanceStore         InstanceStore
-	subscriberConstructor cqrs.CommandsSubscriberConstructor
+	subscriberConstructor ReplyChannelSubscriberConstructor
 	publisher             message.Publisher
 	marshaler             cqrs.CommandEventMarshaler
 	generateTopic         func(commandName string) string
@@ -75,7 +77,7 @@ type OrchestratorFactory struct {
 // NewOrchestratorFactory constructs a new OrchestratorFactory
 func NewOrchestratorFactory(
 	store InstanceStore,
-	subscriberConstructor cqrs.CommandsSubscriberConstructor,
+	subscriberConstructor ReplyChannelSubscriberConstructor,
 	publisher message.Publisher,
 	marshaler cqrs.CommandEventMarshaler,
 	generateTopic func(commandName string) string,
