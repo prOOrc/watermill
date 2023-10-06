@@ -8,7 +8,7 @@ import (
 type RemoteStepActionOption func(action *remoteStepAction)
 
 // WithRemoteStepPredicate sets a predicate function for the action
-func WithRemoteStepPredicate(predicate func(context.Context, SagaData) bool) RemoteStepActionOption {
+func WithRemoteStepPredicate(predicate func(context.Context, any) bool) RemoteStepActionOption {
 	return func(step *remoteStepAction) {
 		step.predicate = predicate
 	}

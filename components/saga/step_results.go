@@ -3,7 +3,7 @@ package saga
 import "github.com/ThreeDotsLabs/watermill/components/cqrs"
 
 type stepResults struct {
-	updatedSagaData    SagaData
+	updatedSagaData    any
 	commands           []cqrs.Command
 	updatedStepContext stepContext
 	local              bool
