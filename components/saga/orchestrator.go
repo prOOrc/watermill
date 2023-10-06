@@ -14,7 +14,7 @@ import (
 
 // Orchestrator orchestrates local and distributed processes
 type Orchestrator interface {
-	Start(ctx context.Context, sagaData SagaData) (*Instance, error)
+	Start(ctx context.Context, sagaData any) (*Instance, error)
 	ReplyChannel() string
 	AddHandlerToRouter(r *message.Router) error
 }
@@ -67,7 +67,7 @@ type orchestrator struct {
 
 const sagaNotStarted = -1
 
-type ReplyFactoryFunc func() interface{}
+type ReplyFactoryFunc func(string) (interface{}, error)
 
 // NewOrchestrator constructs a new Orchestrator
 func NewOrchestrator(
@@ -186,7 +186,7 @@ func (f *OrchestratorFactory) New(definition Definition) (Orchestrator, error) {
 }
 
 // Start creates a new instance of the saga and begins execution
-func (o *orchestrator) Start(ctx context.Context, sagaData SagaData) (*Instance, error) {
+func (o *orchestrator) Start(ctx context.Context, sagaData any) (*Instance, error) {
 	instance := &Instance{
 		sagaID:   uuid.New().String(),
 		sagaName: o.definition.SagaName(),
@@ -438,7 +438,7 @@ func (o *orchestrator) processEnd(ctx context.Context, instance *Instance) {
 	logger.Trace("saga has finished all steps", watermill.LogFields{})
 }
 
-func (o *orchestrator) handleReply(ctx context.Context, stepCtx stepContext, sagaData SagaData, message cqrs.ReplyMessage) (*stepResults, error) {
+func (o *orchestrator) handleReply(ctx context.Context, stepCtx stepContext, sagaData any, message cqrs.ReplyMessage) (*stepResults, error) {
 	replyName := message.Reply().ReplyName()
 
 	logger := o.config.Logger.With(
@@ -489,7 +489,7 @@ func (o *orchestrator) handleReply(ctx context.Context, stepCtx stepContext, sag
 	}
 }
 
-func (o *orchestrator) executeNextStep(ctx context.Context, stepCtx stepContext, sagaData SagaData) *stepResults {
+func (o *orchestrator) executeNextStep(ctx context.Context, stepCtx stepContext, sagaData any) *stepResults {
 	var stepDelta = 1
 	var direction = 1
 	var step Step

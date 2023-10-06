@@ -4,14 +4,14 @@ package saga
 type Instance struct {
 	sagaID       string
 	sagaName     string
-	sagaData     SagaData
+	sagaData     any
 	currentStep  int
 	endState     bool
 	compensating bool
 }
 
 // NewSagaInstance constructor for *SagaInstances
-func NewSagaInstance(sagaName, sagaID string, sagaData SagaData, currentStep int, endState, compensating bool) *Instance {
+func NewSagaInstance(sagaName, sagaID string, sagaData any, currentStep int, endState, compensating bool) *Instance {
 	return &Instance{
 		sagaID:       sagaID,
 		sagaName:     sagaName,
@@ -33,7 +33,7 @@ func (i *Instance) SagaName() string {
 }
 
 // SagaData returns the instance saga data
-func (i *Instance) SagaData() SagaData {
+func (i *Instance) SagaData() any {
 	return i.sagaData
 }
 
