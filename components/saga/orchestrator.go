@@ -289,7 +289,7 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 		return nil
 	}
 
-	o.config.Marshaler.Unmarshal(message, replyMessage)
+	err = o.config.Marshaler.Unmarshal(message, replyMessage)
 	if err != nil {
 		// sagas should not be receiving any replies that have not already been registered
 		logger.Error("error decoding reply message payload", err, watermill.LogFields{})
