@@ -198,25 +198,24 @@ func (o *orchestrator) Start(ctx context.Context, sagaData any) (*Instance, erro
 		return nil, err
 	}
 
-	logger := o.config.Logger.With(
-		watermill.LogFields{
-			"saga_name": o.definition.SagaName(),
-			"saga_id":   instance.sagaID,
-		},
-	)
+	logFields := watermill.LogFields{
+		"saga_name": o.definition.SagaName(),
+		"saga_id":   instance.sagaID,
+	}
+	logger := o.config.Logger.With(logFields)
 
-	logger.Trace("executing saga starting hook", watermill.LogFields{})
+	logger.Trace("executing saga starting hook", logFields)
 	o.definition.OnHook(ctx, SagaStarting, instance)
 
 	results := o.executeNextStep(ctx, stepContext{step: sagaNotStarted}, sagaData)
 	if results.failure != nil {
-		logger.Error("error while starting saga orchestration", results.failure, watermill.LogFields{})
+		logger.Error("error while starting saga orchestration", results.failure, logFields)
 		return nil, err
 	}
 
 	err = o.processResults(ctx, instance, results)
 	if err != nil {
-		logger.Error("error while processing results", err, watermill.LogFields{})
+		logger.Error("error while processing results", err, logFields)
 		return nil, err
 	}
 
@@ -231,12 +230,13 @@ func (o *orchestrator) ReplyChannel() string {
 func (o *orchestrator) AddHandlerToRouter(r *message.Router) (err error) {
 	handlerName := o.definition.SagaName()
 	topicName := o.ReplyChannel()
-	logger := o.config.Logger.With(watermill.LogFields{
+	logFields := watermill.LogFields{
 		"command_handler_name": handlerName,
 		"topic":                topicName,
-	})
+	}
+	logger := o.config.Logger.With(logFields)
 
-	logger.Debug("Adding saga to router", nil)
+	logger.Debug("Adding saga to router", logFields)
 
 	subscriber, err := o.config.SubscriberConstructor(handlerName)
 	if err != nil {
@@ -272,27 +272,26 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 		return nil
 	}
 
-	logger := o.config.Logger.With(
-		watermill.LogFields{
-			"reply_name": replyName,
-			"saga_name":  sagaName,
-			"saga_id":    sagaID,
-			"message_id": message.UUID,
-		},
-	)
+	logFields := watermill.LogFields{
+		"reply_name": replyName,
+		"saga_name":  sagaName,
+		"saga_id":    sagaID,
+		"message_id": message.UUID,
+	}
+	logger := o.config.Logger.With(logFields)
 
-	logger.Debug("received saga reply message", watermill.LogFields{})
+	logger.Debug("received saga reply message", logFields)
 
 	replyMessage, err := o.definition.NewReply(replyName)
 	if err != nil {
-		logger.Error("recieve message error", err, watermill.LogFields{})
+		logger.Error("recieve message error", err, logFields)
 		return nil
 	}
 
 	err = o.config.Marshaler.Unmarshal(message, replyMessage)
 	if err != nil {
 		// sagas should not be receiving any replies that have not already been registered
-		logger.Error("error decoding reply message payload", err, watermill.LogFields{})
+		logger.Error("error decoding reply message payload", err, logFields)
 		return nil
 	}
 	reply := replyMessage.(cqrs.Reply)
@@ -301,7 +300,7 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 	data := o.definition.NewData()
 	instance, err := o.config.InstanceStore.Find(ctx, sagaID, data)
 	if err != nil {
-		logger.Error("failed to locate saga instance data", err, watermill.LogFields{})
+		logger.Error("failed to locate saga instance data", err, logFields)
 		return nil
 	}
 
@@ -309,13 +308,13 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 
 	results, err := o.handleReply(ctx, stepCtx, instance.SagaData(), replyMsg)
 	if err != nil {
-		logger.Error("saga reply handler returned an error", err, watermill.LogFields{})
+		logger.Error("saga reply handler returned an error", err, logFields)
 		return err
 	}
 
 	err = o.processResults(ctx, instance, results)
 	if err != nil {
-		logger.Error("error while processing results", err, watermill.LogFields{})
+		logger.Error("error while processing results", err, logFields)
 		return err
 	}
 
@@ -348,20 +347,19 @@ func (o *orchestrator) replyMessageInfo(message *message.Message) (string, strin
 }
 
 func (o *orchestrator) processResults(ctx context.Context, instance *Instance, results *stepResults) (err error) {
-	logger := o.config.Logger.With(
-		watermill.LogFields{
-			"saga_name": o.definition.SagaName(),
-			"saga_id":   instance.sagaID,
-		},
-	)
+	logFields := watermill.LogFields{
+		"saga_name": o.definition.SagaName(),
+		"saga_id":   instance.sagaID,
+	}
+	logger := o.config.Logger.With(logFields)
 
 	for {
 		if results.failure != nil {
-			logger.Trace("handling local failure result", watermill.LogFields{})
-			logger.Error("error while process step", results.failure, watermill.LogFields{})
+			logger.Trace("handling local failure result", logFields)
+			logger.Error("error while process step", results.failure, logFields)
 			results, err = o.handleReply(ctx, results.updatedStepContext, results.updatedSagaData, cqrs.WithFailure())
 			if err != nil {
-				logger.Error("error handling local failure result", err, watermill.LogFields{})
+				logger.Error("error handling local failure result", err, logFields)
 				return err
 			}
 		} else {
@@ -381,7 +379,7 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 				topicName := o.config.GenerateSubscribeTopic(commandName)
 				err = o.config.Publisher.Publish(topicName, msg)
 				if err != nil {
-					logger.Error("error while sending commands", err, watermill.LogFields{})
+					logger.Error("error while sending commands", err, logFields)
 					return err
 				}
 			}
@@ -398,20 +396,20 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 
 			err = o.config.InstanceStore.Update(ctx, instance)
 			if err != nil {
-				logger.Error("error saving saga instance", err, watermill.LogFields{})
+				logger.Error("error saving saga instance", err, logFields)
 				return err
 			}
 
 			if !results.local {
-				logger.Trace("exiting step loop", watermill.LogFields{})
+				logger.Trace("exiting step loop", logFields)
 				break
 			}
 
 			// handle a local success outcome and kick off the next step
-			logger.Trace("handling local success result", watermill.LogFields{})
+			logger.Trace("handling local success result", logFields)
 			results, err = o.handleReply(ctx, results.updatedStepContext, results.updatedSagaData, cqrs.WithSuccess())
 			if err != nil {
-				logger.Error("error handling local success result", err, watermill.LogFields{})
+				logger.Error("error handling local success result", err, logFields)
 				return err
 			}
 		}
@@ -421,72 +419,78 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 }
 
 func (o *orchestrator) processEnd(ctx context.Context, instance *Instance) {
-	logger := o.config.Logger.With(
-		watermill.LogFields{
-			"saga_name": o.definition.SagaName(),
-			"saga_id":   instance.sagaID,
-		},
-	)
+	logFields := watermill.LogFields{
+		"saga_name": o.definition.SagaName(),
+		"saga_id":   instance.sagaID,
+	}
+	logger := o.config.Logger.With(logFields)
 
 	if instance.compensating {
-		logger.Trace("executing saga compensated hook", watermill.LogFields{})
+		logger.Trace("executing saga compensated hook", logFields)
 		o.definition.OnHook(ctx, SagaCompensated, instance)
 	} else {
-		logger.Trace("executing saga completed hook", watermill.LogFields{})
+		logger.Trace("executing saga completed hook", logFields)
 		o.definition.OnHook(ctx, SagaCompleted, instance)
 	}
-	logger.Trace("saga has finished all steps", watermill.LogFields{})
+	logger.Trace("saga has finished all steps", logFields)
 }
 
 func (o *orchestrator) handleReply(ctx context.Context, stepCtx stepContext, sagaData any, message cqrs.ReplyMessage) (*stepResults, error) {
 	replyName := message.Reply().ReplyName()
 
-	logger := o.config.Logger.With(
-		watermill.LogFields{
-			"saga_name":  o.definition.SagaName(),
-			"saga_id":    message.Headers().Get(MessageReplySagaID),
-			"reply_name": replyName,
-		},
-	)
+	logFields := watermill.LogFields{
+		"saga_name":  o.definition.SagaName(),
+		"saga_id":    message.Headers().Get(MessageReplySagaID),
+		"reply_name": replyName,
+	}
+	logger := o.config.Logger.With(logFields)
 
 	if stepCtx.step >= len(o.definition.Steps()) || stepCtx.step < 0 {
-		logger.Error("current step is out of bounds", fmt.Errorf("current step is out of bounds"), watermill.LogFields{"Step": fmt.Sprintf("%d", stepCtx.step)})
+		logger.Error(
+			"current step is out of bounds",
+			fmt.Errorf("current step is out of bounds"),
+			logFields.Add(watermill.LogFields{"Step": fmt.Sprintf("%d", stepCtx.step)}),
+		)
 		return nil, fmt.Errorf("current step is out of bounds: 0-%d, got %d", len(o.definition.Steps()), stepCtx.step)
 	}
 	step := o.definition.Steps()[stepCtx.step]
 
 	// handle specific replies
 	if handler := step.getReplyHandler(replyName, stepCtx.compensating); handler != nil {
-		logger.Trace("saga reply handler found", watermill.LogFields{})
+		logger.Trace("saga reply handler found", logFields)
 		err := handler(ctx, sagaData, message.Reply())
 		if err != nil {
-			logger.Error("saga reply handler returned an error", err, watermill.LogFields{})
+			logger.Error("saga reply handler returned an error", err, logFields)
 			return nil, err
 		}
 	} else {
-		logger.Trace("saga reply handler not found", watermill.LogFields{})
+		logger.Trace("saga reply handler not found", logFields)
 	}
 
 	outcome, err := message.Headers().GetRequired(cqrs.MessageReplyOutcome)
 	if err != nil {
-		logger.Error("error reading reply outcome", err, watermill.LogFields{})
+		logger.Error("error reading reply outcome", err, logFields)
 		return nil, err
 	}
 
-	logger.Trace("reply outcome", watermill.LogFields{"Outcome": outcome})
+	logger.Trace("reply outcome", logFields.Add(watermill.LogFields{"Outcome": outcome}))
 
 	success := outcome == cqrs.ReplyOutcomeSuccess
 
 	switch {
 	case success:
-		logger.Trace("advancing to next step", watermill.LogFields{})
+		logger.Trace("advancing to next step", logFields)
 		return o.executeNextStep(ctx, stepCtx, sagaData), nil
 	case stepCtx.compensating:
 		// we're already failing, we can't fail any more
-		logger.Error("received a failure outcome while compensating", fmt.Errorf("received a failure outcome while compensating"), watermill.LogFields{"Step": fmt.Sprintf("%d", stepCtx.step)})
+		logger.Error(
+			"received a failure outcome while compensating",
+			fmt.Errorf("received a failure outcome while compensating"),
+			logFields.Add(watermill.LogFields{"Step": fmt.Sprintf("%d", stepCtx.step)}),
+		)
 		return nil, fmt.Errorf("received failure outcome while compensating")
 	default:
-		logger.Trace("compensating to previous step", watermill.LogFields{})
+		logger.Trace("compensating to previous step", logFields)
 		return o.executeNextStep(ctx, stepCtx.compensate(), sagaData), nil
 	}
 }
