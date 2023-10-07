@@ -463,6 +463,8 @@ func (o *orchestrator) handleReply(ctx context.Context, stepCtx stepContext, sag
 			logger.Error("saga reply handler returned an error", err, watermill.LogFields{})
 			return nil, err
 		}
+	} else {
+		logger.Trace("saga reply handler not found", watermill.LogFields{})
 	}
 
 	outcome, err := message.Headers().GetRequired(cqrs.MessageReplyOutcome)
