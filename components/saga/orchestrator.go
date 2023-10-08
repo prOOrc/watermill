@@ -16,6 +16,7 @@ import (
 type Orchestrator interface {
 	Start(ctx context.Context, sagaData any) (*Instance, error)
 	ReplyChannel() string
+	HandlerName() string
 	AddHandlerToRouter(r *message.Router) (*message.Handler, error)
 }
 
@@ -227,8 +228,13 @@ func (o *orchestrator) ReplyChannel() string {
 	return o.definition.ReplyChannel()
 }
 
+// HandlerName returns the handler name
+func (o *orchestrator) HandlerName() string {
+	return o.definition.SagaName()
+}
+
 func (o *orchestrator) AddHandlerToRouter(r *message.Router) (handler *message.Handler, err error) {
-	handlerName := o.definition.SagaName()
+	handlerName := o.HandlerName()
 	topicName := o.ReplyChannel()
 	logFields := watermill.LogFields{
 		"command_handler_name": handlerName,
