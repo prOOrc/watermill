@@ -16,7 +16,7 @@ import (
 type Orchestrator interface {
 	Start(ctx context.Context, sagaData any) (*Instance, error)
 	ReplyChannel() string
-	AddHandlerToRouter(r *message.Router) error
+	AddHandlerToRouter(r *message.Router) (*message.Handler, error)
 }
 
 type ReplyChannelSubscriberConstructor func(handlerName string) (message.Subscriber, error)
@@ -227,7 +227,7 @@ func (o *orchestrator) ReplyChannel() string {
 	return o.definition.ReplyChannel()
 }
 
-func (o *orchestrator) AddHandlerToRouter(r *message.Router) (err error) {
+func (o *orchestrator) AddHandlerToRouter(r *message.Router) (handler *message.Handler, err error) {
 	handlerName := o.definition.SagaName()
 	topicName := o.ReplyChannel()
 	logFields := watermill.LogFields{
@@ -240,17 +240,17 @@ func (o *orchestrator) AddHandlerToRouter(r *message.Router) (err error) {
 
 	subscriber, err := o.config.SubscriberConstructor(handlerName)
 	if err != nil {
-		return errors.Wrap(err, "cannot create subscriber for command processor")
+		return nil, errors.Wrap(err, "cannot create subscriber for command processor")
 	}
 
-	r.AddNoPublisherHandler(
+	handler = r.AddNoPublisherHandler(
 		handlerName,
 		topicName,
 		subscriber,
 		o.receiveMessage,
 	)
 
-	return nil
+	return handler, nil
 }
 
 // receiveMessage implements message.HandlerFunc
