@@ -1,6 +1,8 @@
 package saga
 
 import (
+	"strconv"
+
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 
@@ -9,6 +11,7 @@ func WithSagaInfo(instance *Instance) message.MessageOption {
 	return message.WithHeaders(map[string]string{
 		MessageCommandSagaID:   instance.sagaID,
 		MessageCommandSagaName: instance.sagaName,
+		MessageCommandSagaStep: strconv.Itoa(instance.currentStep),
 	})
 }
 

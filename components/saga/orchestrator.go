@@ -4,6 +4,7 @@ import (
 	"context"
 	stdErrors "errors"
 	"fmt"
+	"strconv"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/components/cqrs"
@@ -261,7 +262,7 @@ func (o *orchestrator) AddHandlerToRouter(r *message.Router) (handler *message.H
 
 // receiveMessage implements message.HandlerFunc
 func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
-	replyName, sagaID, sagaName, err := o.replyMessageInfo(message)
+	replyName, sagaID, sagaName, replyStep, err := o.replyMessageInfo(message)
 	if err != nil {
 		return nil
 	}
@@ -309,6 +310,13 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 		logger.Error("failed to locate saga instance data", err, logFields)
 		return nil
 	}
+	if instance.currentStep != replyStep+1 {
+		logger.Error(
+			"received saga reply message of invalid step",
+			fmt.Errorf("instance step %d replay step %d", instance.currentStep, replyStep),
+			logFields)
+		return nil
+	}
 
 	stepCtx := instance.getStepContext()
 
@@ -327,29 +335,41 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 	return nil
 }
 
-func (o *orchestrator) replyMessageInfo(message *message.Message) (string, string, string, error) {
+func (o *orchestrator) replyMessageInfo(message *message.Message) (string, string, string, int, error) {
 	var err error
 	var replyName, sagaID, sagaName string
+	var sagaStep int
 
 	replyName, err = message.Metadata.GetRequired(cqrs.MessageReplyName)
 	if err != nil {
 		o.config.Logger.Error("error reading reply name", err, watermill.LogFields{})
-		return "", "", "", err
+		return "", "", "", 0, err
 	}
 
 	sagaID, err = message.Metadata.GetRequired(MessageReplySagaID)
 	if err != nil {
 		o.config.Logger.Error("error reading saga id", err, watermill.LogFields{})
-		return "", "", "", err
+		return "", "", "", 0, err
 	}
 
 	sagaName, err = message.Metadata.GetRequired(MessageReplySagaName)
 	if err != nil {
 		o.config.Logger.Error("error reading saga name", err, watermill.LogFields{})
-		return "", "", "", err
+		return "", "", "", 0, err
 	}
 
-	return replyName, sagaID, sagaName, nil
+	sagaStepStr, err := message.Metadata.GetRequired(MessageReplySagaStep)
+	if err != nil {
+		o.config.Logger.Error("error reading saga step", err, watermill.LogFields{})
+		return "", "", "", 0, err
+	}
+	sagaStep, err = strconv.Atoi(sagaStepStr)
+	if err != nil {
+		o.config.Logger.Error("error reading saga step", err, watermill.LogFields{})
+		return "", "", "", 0, err
+	}
+
+	return replyName, sagaID, sagaName, sagaStep, nil
 }
 
 func (o *orchestrator) processResults(ctx context.Context, instance *Instance, results *stepResults) (err error) {

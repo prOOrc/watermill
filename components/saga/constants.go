@@ -21,8 +21,10 @@ const (
 const (
 	MessageCommandSagaID   = cqrs.MessageCommandPrefix + "saga_id"
 	MessageCommandSagaName = cqrs.MessageCommandPrefix + "saga_name"
+	MessageCommandSagaStep = cqrs.MessageCommandPrefix + "saga_step"
 	MessageCommandResource = cqrs.MessageCommandPrefix + "resource"
 
 	MessageReplySagaID   = cqrs.MessageReplyPrefix + "saga_id"
 	MessageReplySagaName = cqrs.MessageReplyPrefix + "saga_name"
+	MessageReplySagaStep = cqrs.MessageReplyPrefix + "saga_step"
 )
