@@ -310,7 +310,7 @@ func (o *orchestrator) receiveMessage(message *message.Message) (err error) {
 		logger.Error("failed to locate saga instance data", err, logFields)
 		return nil
 	}
-	if instance.currentStep != replyStep+1 {
+	if instance.currentStep != replyStep {
 		logger.Error(
 			"received saga reply message of invalid step",
 			fmt.Errorf("instance step %d replay step %d", instance.currentStep, replyStep),
@@ -389,6 +389,7 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 				return err
 			}
 		} else {
+			instance.updateStepContext(results.updatedStepContext)
 			for _, command := range results.commands {
 				msg, err := o.config.Marshaler.Marshal(command)
 				if err != nil {
@@ -409,8 +410,6 @@ func (o *orchestrator) processResults(ctx context.Context, instance *Instance, r
 					return err
 				}
 			}
-
-			instance.updateStepContext(results.updatedStepContext)
 
 			if results.updatedSagaData != nil {
 				instance.sagaData = results.updatedSagaData
