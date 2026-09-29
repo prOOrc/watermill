@@ -532,7 +532,8 @@ func (o *orchestrator) executeNextStep(ctx context.Context, stepCtx stepContext,
 	sagaSteps := o.definition.Steps()
 
 	for i := stepCtx.step + direction; i >= 0 && i < len(sagaSteps); i += direction {
-		if step = sagaSteps[i]; step.hasInvocableAction(ctx, sagaData, stepCtx.compensating) {
+		if sagaSteps[i].hasInvocableAction(ctx, sagaData, stepCtx.compensating) {
+			step = sagaSteps[i]
 			break
 		}
 
