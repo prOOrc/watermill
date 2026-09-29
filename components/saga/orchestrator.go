@@ -19,6 +19,10 @@ type Orchestrator interface {
 	ReplyChannel() string
 	HandlerName() string
 	AddHandlerToRouter(r *message.Router) (*message.Handler, error)
+	// HandleReply synchronously processes a reply message without going through
+	// the router. Intended for deterministic tests: the caller dispatches replies
+	// directly and the saga runs to completion on the caller's goroutine.
+	HandleReply(ctx context.Context, msg *message.Message) error
 }
 
 type ReplyChannelSubscriberConstructor func(handlerName string) (message.Subscriber, error)
@@ -258,6 +262,12 @@ func (o *orchestrator) AddHandlerToRouter(r *message.Router) (handler *message.H
 	)
 
 	return handler, nil
+}
+
+// HandleReply implements Orchestrator.HandleReply (see interface docs).
+func (o *orchestrator) HandleReply(ctx context.Context, msg *message.Message) error {
+	msg.SetContext(ctx)
+	return o.receiveMessage(msg)
 }
 
 // receiveMessage implements message.HandlerFunc
